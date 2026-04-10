@@ -20,36 +20,18 @@ function parseBody(request) {
   return request.json().catch(() => ({}));
 }
 
-async function ensureTables(env) {
-  await env.DB.exec(`
-    CREATE TABLE IF NOT EXISTS school_profile (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL DEFAULT '',
-      stage TEXT NOT NULL DEFAULT '',
-      note TEXT NOT NULL DEFAULT '',
-      updated_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS analysis_datasets (
-      id TEXT PRIMARY KEY,
-      school_name TEXT NOT NULL DEFAULT '',
-      grade_name TEXT NOT NULL DEFAULT '',
-      term_name TEXT NOT NULL DEFAULT '',
-      exam_name TEXT NOT NULL DEFAULT '',
-      exam_date TEXT NOT NULL DEFAULT '',
-      student_count INTEGER NOT NULL DEFAULT 0,
-      subject_count INTEGER NOT NULL DEFAULT 0,
-      payload_json TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      created_at TEXT NOT NULL
-    );
-  `);
-}
-
 async function handleProfile(request, env) {
   if (request.method === 'GET') {
     const result = await env.DB.prepare('SELECT id, name, stage, note, updated_at FROM school_profile WHERE id = ?').bind('default').first();
-    return jsonResponse({ item: result || null });
+    return jsonResponse({
+      item: result ? {
+        id: result.id,
+        name: result.name,
+        stage: result.stage,
+        note: result.note,
+        updatedAt: result.updated_at
+      } : null
+    });
   }
 
   const body = await parseBody(request);

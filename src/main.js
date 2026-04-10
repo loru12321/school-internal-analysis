@@ -316,6 +316,13 @@ function renderImportPanel(dataset) {
               <button type="button" class="btn-quiet" data-action="download-teacher-template">任课模板</button>
             </div>
           </form>
+          <form id="jsonImportForm" class="inline-form">
+            <label class="file-field compact">
+              <span>导回 JSON 备份</span>
+              <input name="jsonFile" type="file" accept=".json" required />
+            </label>
+            <button type="submit" class="btn-quiet">导入已导出的 JSON</button>
+          </form>
         </div>
 
         ${dataset ? `
@@ -1134,11 +1141,66 @@ function downloadTeacherTemplate() {
   downloadTextFile('任课表导入模板.csv', csvFromMatrix(matrix), 'text/csv;charset=utf-8');
 }
 
+async function importJsonSnapshot(file) {
+  const raw = await file.text();
+  const parsed = JSON.parse(raw);
+
+  if (!parsed || typeof parsed !== 'object') {
+    throw new Error('JSON 文件内容无效');
+  }
+
+  if (Array.isArray(parsed.datasets)) {
+    const nextDatasets = parsed.datasets.map((dataset) => prepareDataset(dataset));
+    const activeId = parsed.activeDatasetId || nextDatasets[0]?.id || '';
+    state.profile = {
+      ...state.profile,
+      ...(parsed.profile || {})
+    };
+    updateDatasetList(nextDatasets, activeId);
+    analysisCache.clear();
+    return nextDatasets.length;
+  }
+
+  const dataset = prepareDataset(parsed);
+  upsertDataset(dataset);
+  return 1;
+}
+
 async function refreshCloudCatalog() {
   const payload = await CloudApi.listCloudDatasets();
   state.cloudCatalog = payload.items || [];
   state.cloudAvailable = true;
   state.cloudMessage = `读取到 ${state.cloudCatalog.length} 条云端记录。`;
+}
+
+async function bootstrapCloudStatus() {
+  try {
+    const [health, profilePayload] = await Promise.all([
+      CloudApi.pingCloud(),
+      CloudApi.fetchCloudProfile().catch(() => ({ item: null }))
+    ]);
+
+    state.cloudAvailable = true;
+    state.cloudMessage = health.message || 'Cloudflare Worker 可用。';
+
+    if (profilePayload?.item?.name && state.profile.name === persisted.profile.name) {
+      state.profile = {
+        ...state.profile,
+        name: profilePayload.item.name,
+        stage: profilePayload.item.stage || state.profile.stage,
+        note: profilePayload.item.note || state.profile.note
+      };
+      persistState();
+    }
+
+    const catalog = await CloudApi.listCloudDatasets().catch(() => ({ items: [] }));
+    state.cloudCatalog = catalog.items || [];
+  } catch (error) {
+    state.cloudAvailable = false;
+    state.cloudMessage = 'Cloudflare Worker 暂不可达。';
+  }
+
+  render();
 }
 
 app.addEventListener('click', async (event) => {
@@ -1316,6 +1378,23 @@ app.addEventListener('submit', async (event) => {
       return;
     }
 
+    if (event.target.id === 'jsonImportForm') {
+      const formData = new FormData(event.target);
+      const jsonFile = formData.get('jsonFile');
+      if (!(jsonFile instanceof File) || !jsonFile.name) {
+        showToast('请先选择 JSON 备份文件。', 'error');
+        return;
+      }
+
+      setBusy('正在导入 JSON 备份...');
+      const importedCount = await importJsonSnapshot(jsonFile);
+      state.view = 'overview';
+      clearBusy();
+      showToast(`已从 JSON 导入 ${importedCount} 份考试数据。`, 'success');
+      render();
+      return;
+    }
+
     if (event.target.id === 'thresholdForm') {
       const dataset = getActiveDataset();
       if (!dataset) return;
@@ -1377,3 +1456,6 @@ app.addEventListener('submit', async (event) => {
 });
 
 render();
+queueMicrotask(() => {
+  bootstrapCloudStatus();
+});

@@ -1,4 +1,20 @@
-const API_BASE = (import.meta.env?.VITE_API_BASE || '').replace(/\/+$/, '');
+const DEFAULT_REMOTE_API_BASE = 'https://school-internal-analysis.hkakjiweu.workers.dev';
+
+function resolveApiBase() {
+  const configured = (import.meta.env?.VITE_API_BASE || '').replace(/\/+$/, '');
+  if (configured) return configured;
+
+  if (typeof window !== 'undefined') {
+    const host = window.location.hostname;
+    if (host === 'localhost' || host === '127.0.0.1') {
+      return DEFAULT_REMOTE_API_BASE;
+    }
+  }
+
+  return '';
+}
+
+const API_BASE = resolveApiBase();
 
 async function request(path, options = {}) {
   const response = await fetch(`${API_BASE}${path}`, {
