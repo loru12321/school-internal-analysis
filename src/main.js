@@ -264,7 +264,129 @@ function renderTeacherAssignments(dataset) {
   `;
 }
 
-function renderImportPanel(dataset) {
+function renderDataQualityPanel(dataset, analysis, { compact = false } = {}) {
+  const health = analysis?.health;
+  if (!dataset || !health) return '';
+
+  const subjectCoverageRows = compact
+    ? health.subjectCoverage.filter((row) => row.missingCount).slice(0, 6)
+    : health.subjectCoverage;
+  const missingTeacherRows = health.missingTeacherAssignments.slice(0, compact ? 6 : 10);
+  const incompleteRows = health.incompleteStudents.slice(0, 8);
+  const mismatchRows = health.totalMismatchStudents.slice(0, 8);
+
+  const subjectCoverageMarkup = subjectCoverageRows.length
+    ? `
+      <div class="table-wrap slim">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>学科</th>
+              <th>有分人数</th>
+              <th>缺分</th>
+              <th>覆盖率</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${subjectCoverageRows.map((row) => `
+              <tr>
+                <td>${escapeHtml(row.subject)}</td>
+                <td>${row.presentCount} / ${row.studentCount}</td>
+                <td class="${row.missingCount ? 'negative-text' : ''}">${row.missingCount}</td>
+                <td>${formatPercent(row.coverageRate)}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    `
+    : '<div class="inline-empty quality-empty">当前学科分数字段完整。</div>';
+
+  const missingTeacherMarkup = missingTeacherRows.length
+    ? `
+      <div class="quality-list">
+        ${missingTeacherRows.map((row) => `
+          <div class="quality-item">
+            <strong>${escapeHtml(row.className)} · ${escapeHtml(row.subject)}</strong>
+            <span>还没有绑定任课教师</span>
+          </div>
+        `).join('')}
+      </div>
+    `
+    : '<div class="inline-empty quality-empty">任课映射已完整，可直接进行同学科教师比较。</div>';
+
+  const incompleteMarkup = incompleteRows.length
+    ? `
+      <div class="quality-list">
+        ${incompleteRows.map((row) => `
+          <div class="quality-item">
+            <strong>${escapeHtml(row.className)} · ${escapeHtml(row.name)}</strong>
+            <span>${escapeHtml(row.missingSubjects.join('、'))}</span>
+          </div>
+        `).join('')}
+      </div>
+    `
+    : '<div class="inline-empty quality-empty">没有发现缺科或缺分学生。</div>';
+
+  const mismatchMarkup = mismatchRows.length
+    ? `
+      <div class="quality-list">
+        ${mismatchRows.map((row) => `
+          <div class="quality-item">
+            <strong>${escapeHtml(row.className)} · ${escapeHtml(row.name)}</strong>
+            <span>总分 ${formatNumber(row.recordedTotal)}，分科合计 ${formatNumber(row.computedTotal)}，差值 ${row.delta > 0 ? '+' : ''}${formatNumber(row.delta)}</span>
+          </div>
+        `).join('')}
+      </div>
+    `
+    : '<div class="inline-empty quality-empty">总分与分科合计一致。</div>';
+
+  return `
+    <div class="surface">
+      <div class="section-head">
+        <div>
+          <h3>数据体检</h3>
+          <p>导入后自动校验缺分、总分一致性和任课映射覆盖情况，避免单校分析口径跑偏。</p>
+        </div>
+        ${health.missingTeacherAssignmentCount ? '<button class="btn-quiet" data-action="download-missing-teacher-template">导出缺失任课模板</button>' : ''}
+      </div>
+      <div class="metric-strip compact quality-strip">
+        ${renderMetric('完整成绩', `${health.completeStudentCount} 名`, `覆盖率 ${formatPercent(health.completeStudentRate)}`)}
+        ${renderMetric('缺分学生', `${health.incompleteStudentCount} 名`, `${health.missingScoreEntriesCount} 个缺分项`)}
+        ${renderMetric('总分异常', `${health.totalMismatchCount} 名`, health.totalMismatchCount ? '建议先核对源表' : '总分校验通过')}
+        ${renderMetric('任课覆盖', formatPercent(health.teacherCoverageRate), `${health.missingTeacherAssignmentCount} 个班级学科待补`)}
+      </div>
+      <div class="tag-strip quality-tags">
+        ${health.warningMessages.length
+          ? health.warningMessages.map((message) => `<span class="tag warn">${escapeHtml(message)}</span>`).join('')
+          : '<span class="tag positive">当前考试数据结构完整，可直接用于学生、班级和教师分析。</span>'}
+        ${health.redundantTeacherAssignmentCount ? `<span class="tag neutral">${health.redundantTeacherAssignmentCount} 条任课记录未匹配到有效成绩班级</span>` : ''}
+      </div>
+      <div class="quality-grid ${compact ? 'is-compact' : ''}">
+        <section class="quality-card">
+          <div class="quality-card-head">${compact ? '缺分学科' : '学科覆盖情况'}</div>
+          ${subjectCoverageMarkup}
+        </section>
+        <section class="quality-card">
+          <div class="quality-card-head">待补任课映射</div>
+          ${missingTeacherMarkup}
+        </section>
+        ${compact ? '' : `
+          <section class="quality-card">
+            <div class="quality-card-head">缺分学生预警</div>
+            ${incompleteMarkup}
+          </section>
+          <section class="quality-card">
+            <div class="quality-card-head">总分一致性校验</div>
+            ${mismatchMarkup}
+          </section>
+        `}
+      </div>
+    </div>
+  `;
+}
+
+function renderImportPanel(dataset, analysis) {
   const classOptions = dataset?.students
     ? [...new Set(dataset.students.map((student) => student.className))].sort((left, right) => left.localeCompare(right, 'zh-Hans-CN'))
     : [];
@@ -362,6 +484,7 @@ function renderImportPanel(dataset) {
               </div>
             </form>
           </div>
+          ${renderDataQualityPanel(dataset, analysis, { compact: true })}
         ` : ''}
       </section>
 
@@ -437,6 +560,8 @@ function renderOverviewPanel(dataset, analysis) {
         ${renderMetric('及格率', formatPercent(analysis.overview.passRate), `总分 ≥ ${dataset.thresholds.total.pass}`)}
         ${renderMetric('低分预警', formatPercent(analysis.overview.lowRate), `总分 < ${dataset.thresholds.total.low}`)}
       </div>
+
+      ${renderDataQualityPanel(dataset, analysis)}
 
       <div class="two-column">
         <div class="surface">
@@ -912,7 +1037,7 @@ function renderActivePanel(dataset, analysis) {
       return renderCloudPanel(dataset);
     case 'import':
     default:
-      return renderImportPanel(dataset);
+      return renderImportPanel(dataset, analysis);
   }
 }
 function drawCharts(dataset, analysis) {
@@ -1141,6 +1266,23 @@ function downloadTeacherTemplate() {
   downloadTextFile('任课表导入模板.csv', csvFromMatrix(matrix), 'text/csv;charset=utf-8');
 }
 
+function downloadMissingTeacherTemplate(dataset, analysis) {
+  const rows = analysis?.health?.missingTeacherAssignments || [];
+  if (!dataset || !rows.length) {
+    showToast('当前考试没有待补的任课映射。', 'info');
+    return;
+  }
+
+  const matrix = [
+    ['班级', '学科', '教师']
+  ];
+  rows.forEach((row) => {
+    matrix.push([row.className, row.subject, '']);
+  });
+
+  downloadTextFile(`${dataset.examName}-缺失任课模板.csv`, csvFromMatrix(matrix), 'text/csv;charset=utf-8');
+}
+
 async function importJsonSnapshot(file) {
   const raw = await file.text();
   const parsed = JSON.parse(raw);
@@ -1250,6 +1392,12 @@ app.addEventListener('click', async (event) => {
       case 'download-teacher-template':
         downloadTeacherTemplate();
         return;
+      case 'download-missing-teacher-template': {
+        const dataset = getActiveDataset();
+        const analysis = getAnalysis(dataset);
+        downloadMissingTeacherTemplate(dataset, analysis);
+        return;
+      }
       case 'select-student':
         state.selectedStudentId = studentId;
         render();

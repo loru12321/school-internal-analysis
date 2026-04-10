@@ -156,6 +156,10 @@ function buildMetricSummary(scoreList, threshold) {
   };
 }
 
+function sortClassNames(left, right) {
+  return normalizeClass(left).localeCompare(normalizeClass(right), 'zh-Hans-CN');
+}
+
 function applyCompositeIndex(rows, weights = DEFAULT_METRIC_WEIGHTS) {
   if (!rows.length) return [];
   if (rows.length === 1) {
@@ -279,7 +283,7 @@ function buildTeacherSummary(dataset, classBuckets) {
         key: bucket.key,
         teacherName: bucket.teacherName,
         subject,
-        classNames: bucket.classNames.sort((left, right) => normalizeClass(left).localeCompare(normalizeClass(right), 'zh-Hans-CN')),
+        classNames: bucket.classNames.sort(sortClassNames),
         classesText: bucket.classNames.join('、'),
         classCount: bucket.classNames.length,
         studentCount: bucket.studentCount,
@@ -287,7 +291,7 @@ function buildTeacherSummary(dataset, classBuckets) {
         excellentRate: summary.excellentRate,
         passRate: summary.passRate,
         lowRate: summary.lowRate,
-        classBreakdown: bucket.classBreakdown.sort((left, right) => normalizeClass(left.className).localeCompare(normalizeClass(right.className), 'zh-Hans-CN'))
+        classBreakdown: bucket.classBreakdown.sort((left, right) => sortClassNames(left.className, right.className))
       };
     });
 
@@ -295,6 +299,131 @@ function buildTeacherSummary(dataset, classBuckets) {
   });
 
   return teacherBySubject;
+}
+
+function buildDatasetHealth(dataset, students, classBuckets) {
+  const classNames = [...classBuckets.keys()].sort(sortClassNames);
+  const assignmentMap = new Map(
+    dataset.teacherAssignments.map((row) => [buildClassSubjectKey(row.className, row.subject), row.teacherName])
+  );
+
+  const expectedAssignments = classNames.flatMap((className) => dataset.subjects.map((subject) => ({
+    key: buildClassSubjectKey(className, subject),
+    className,
+    subject
+  })));
+
+  const subjectCoverage = dataset.subjects.map((subject) => {
+    const presentCount = students.filter((student) => Number.isFinite(student.scores[subject])).length;
+    const missingCount = students.length - presentCount;
+    return {
+      subject,
+      studentCount: students.length,
+      presentCount,
+      missingCount,
+      coverageRate: computeRate(presentCount, students.length)
+    };
+  }).sort((left, right) => sortSubjects(left.subject, right.subject));
+
+  const classSubjectCoverage = expectedAssignments.map(({ key, className, subject }) => {
+    const classStudents = classBuckets.get(className) || [];
+    const presentCount = classStudents.filter((student) => Number.isFinite(student.scores[subject])).length;
+    const missingCount = classStudents.length - presentCount;
+    return {
+      className,
+      subject,
+      teacherName: assignmentMap.get(key) || '',
+      studentCount: classStudents.length,
+      presentCount,
+      missingCount,
+      coverageRate: computeRate(presentCount, classStudents.length)
+    };
+  }).sort((left, right) => sortClassNames(left.className, right.className) || sortSubjects(left.subject, right.subject));
+
+  const incompleteStudents = students.map((student) => {
+    const missingSubjects = dataset.subjects.filter((subject) => !Number.isFinite(student.scores[subject]));
+    if (!missingSubjects.length) return null;
+    return {
+      id: student.id,
+      name: student.name,
+      className: student.className,
+      studentId: student.studentId,
+      missingSubjects,
+      missingCount: missingSubjects.length
+    };
+  }).filter(Boolean).sort((left, right) => (
+    right.missingCount - left.missingCount
+    || sortClassNames(left.className, right.className)
+    || left.name.localeCompare(right.name, 'zh-Hans-CN')
+  ));
+
+  const totalMismatchStudents = students.map((student) => {
+    const computedTotal = round(
+      dataset.subjects.reduce((sum, subject) => sum + (Number.isFinite(student.scores[subject]) ? student.scores[subject] : 0), 0),
+      1
+    );
+    const delta = round(student.total - computedTotal, 1);
+    if (Math.abs(delta) < 0.1) return null;
+    return {
+      id: student.id,
+      name: student.name,
+      className: student.className,
+      studentId: student.studentId,
+      recordedTotal: round(student.total, 1),
+      computedTotal,
+      delta
+    };
+  }).filter(Boolean).sort((left, right) => (
+    Math.abs(right.delta) - Math.abs(left.delta)
+    || sortClassNames(left.className, right.className)
+    || left.name.localeCompare(right.name, 'zh-Hans-CN')
+  ));
+
+  const missingTeacherAssignments = expectedAssignments
+    .filter((item) => !assignmentMap.has(item.key))
+    .map(({ key, ...item }) => item)
+    .sort((left, right) => sortClassNames(left.className, right.className) || sortSubjects(left.subject, right.subject));
+
+  const redundantTeacherAssignments = dataset.teacherAssignments
+    .filter((row) => !classBuckets.has(row.className) || !dataset.subjects.includes(row.subject))
+    .sort((left, right) => sortClassNames(left.className, right.className) || sortSubjects(left.subject, right.subject));
+
+  const completeStudentCount = students.length - incompleteStudents.length;
+  const missingScoreEntriesCount = subjectCoverage.reduce((sum, row) => sum + row.missingCount, 0);
+  const warningMessages = [];
+
+  if (incompleteStudents.length) {
+    warningMessages.push(`${incompleteStudents.length} 名学生存在缺科或缺分记录`);
+  }
+  if (totalMismatchStudents.length) {
+    warningMessages.push(`${totalMismatchStudents.length} 名学生总分与分科合计不一致`);
+  }
+  if (missingTeacherAssignments.length) {
+    warningMessages.push(`${missingTeacherAssignments.length} 个班级学科尚未绑定任课教师`);
+  }
+  if (redundantTeacherAssignments.length) {
+    warningMessages.push(`${redundantTeacherAssignments.length} 条任课记录未匹配到有效成绩班级`);
+  }
+
+  return {
+    completeStudentCount,
+    completeStudentRate: computeRate(completeStudentCount, students.length),
+    incompleteStudentCount: incompleteStudents.length,
+    missingScoreEntriesCount,
+    totalMismatchCount: totalMismatchStudents.length,
+    missingTeacherAssignmentCount: missingTeacherAssignments.length,
+    redundantTeacherAssignmentCount: redundantTeacherAssignments.length,
+    teacherCoverageRate: expectedAssignments.length
+      ? computeRate(expectedAssignments.length - missingTeacherAssignments.length, expectedAssignments.length)
+      : 1,
+    subjectCoverage,
+    classSubjectCoverage,
+    incompleteStudents,
+    totalMismatchStudents,
+    missingTeacherAssignments,
+    redundantTeacherAssignments,
+    warningMessages
+  };
 }
 
 export function prepareDataset(rawDataset) {
@@ -352,7 +481,8 @@ export function computeDatasetAnalysis(datasetInput) {
       gradeSubjectMap: new Map(),
       studentProfiles: [],
       teacherBySubject: {},
-      teacherSubjectOptions: []
+      teacherSubjectOptions: [],
+      health: null
     };
   }
 
@@ -431,6 +561,7 @@ export function computeDatasetAnalysis(datasetInput) {
   const teacherSubjectOptions = Object.keys(teacherBySubject)
     .filter((subject) => teacherBySubject[subject]?.length)
     .sort(sortSubjects);
+  const health = buildDatasetHealth(dataset, students, classBuckets);
 
   return {
     overview: {
@@ -453,7 +584,8 @@ export function computeDatasetAnalysis(datasetInput) {
     gradeSubjectMap,
     studentProfiles,
     teacherBySubject,
-    teacherSubjectOptions
+    teacherSubjectOptions,
+    health
   };
 }
 

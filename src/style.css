@@ -409,6 +409,58 @@ select:focus {
   gap: 10px;
 }
 
+.quality-strip,
+.quality-grid {
+  margin-top: 18px;
+}
+
+.quality-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.quality-card {
+  min-width: 0;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.56);
+}
+
+.quality-card-head {
+  margin-bottom: 12px;
+  font-size: 0.96rem;
+  font-weight: 700;
+}
+
+.quality-list {
+  display: grid;
+  gap: 10px;
+}
+
+.quality-item {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.quality-item strong {
+  font-size: 0.95rem;
+}
+
+.quality-item span {
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.quality-empty {
+  min-height: 160px;
+}
+
 .dataset-item {
   display: flex;
   gap: 14px;
@@ -667,6 +719,7 @@ canvas {
   .workspace-grid,
   .two-column,
   .detail-layout,
+  .quality-grid,
   .metric-strip,
   .metric-strip.compact,
   .form-grid,
